@@ -1,12 +1,15 @@
 package cloudwatch
 
+// see also: https://github.com/boxfuse/cloudwatchlogs-agent/blob/master/logger.go
+
 import (
+	"fmt"
 	"github.com/aaronland/go-string/dsn"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	"github.com/whosonfirst/go-whosonfirst-aws/session"
-	"log"
+	_ "log"
 	"time"
 )
 
@@ -29,7 +32,7 @@ func IsAlreadyExistsError(err error) bool {
 
 func NewCloudWatchWriter(cw_dsn string) (*CloudWatchWriter, error) {
 
-	dsn_map, err := dsn.StringToDSNWithKeys(cw_dsn, "region", "credentials", "group", "stream")
+	dsn_map, err := dsn.StringToDSNWithKeys(cw_dsn, "region", "credentials", "group")
 
 	if err != nil {
 		return nil, err
@@ -55,7 +58,12 @@ func NewCloudWatchWriter(cw_dsn string) (*CloudWatchWriter, error) {
 		return nil, err
 	}
 
-	stream_name := dsn_map["stream"]
+	stream_name, ok := dsn_map["stream"]
+
+	if !ok {
+		now := time.Now()
+		stream_name = fmt.Sprintf("%s-%d", group_name, now.Unix())
+	}
 
 	stream_req := &cloudwatchlogs.CreateLogStreamInput{
 		LogGroupName:  aws.String(group_name),
@@ -81,10 +89,12 @@ func NewCloudWatchWriter(cw_dsn string) (*CloudWatchWriter, error) {
 // https://docs.aws.amazon.com/sdk-for-go/api/service/cloudwatchlogs/#PutLogEventsInput
 // https://docs.aws.amazon.com/sdk-for-go/api/service/cloudwatchlogs/#InputLogEvent
 
+// https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutLogEvents.html
+
 func (wr CloudWatchWriter) Write(msg []byte) (int, error) {
 
 	now := time.Now()
-	ts := now.Unix()
+	ts := now.UnixNano() / int64(time.Millisecond)
 
 	event := &cloudwatchlogs.InputLogEvent{
 		Message:   aws.String(string(msg)),
@@ -101,17 +111,53 @@ func (wr CloudWatchWriter) Write(msg []byte) (int, error) {
 		LogStreamName: aws.String(wr.stream),
 	}
 
-	rsp, err := wr.service.PutLogEvents(req)
+	token, err := wr.nextSequenceToken()
 
 	if err != nil {
 		return 0, err
 	}
 
-	log.Println(rsp)
+	if token != "" {
+		req.SequenceToken = aws.String(token)
+	}
+
+	_, err = wr.service.PutLogEvents(req)
+
+	if err != nil {
+		return 0, err
+	}
 
 	return 0, nil
 }
 
 func (wr CloudWatchWriter) Close() error {
 	return nil
+}
+
+func (wr CloudWatchWriter) nextSequenceToken() (string, error) {
+
+	req := &cloudwatchlogs.DescribeLogStreamsInput{
+		LogGroupName:        aws.String(wr.group),
+		LogStreamNamePrefix: aws.String(wr.stream),
+		Descending:          aws.Bool(true),
+		Limit:               aws.Int64(1),
+	}
+
+	rsp, err := wr.service.DescribeLogStreams(req)
+
+	if err != nil {
+		return "", err
+	}
+
+	if len(rsp.LogStreams) == 0 {
+		return "", nil
+	}
+
+	first := rsp.LogStreams[0]
+
+	if first.UploadSequenceToken == nil {
+		return "", nil
+	}
+
+	return *first.UploadSequenceToken, nil
 }
