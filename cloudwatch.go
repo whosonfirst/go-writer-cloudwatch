@@ -5,6 +5,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	"github.com/whosonfirst/go-whosonfirst-aws/session"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -16,7 +17,7 @@ type CloudWatchWriter struct {
 	stream  string
 }
 
-func NewCloudWatchWriter(cw_dsn string) (log.WOFLog, error) {
+func NewCloudWatchWriter(cw_dsn string) (io.Writer, error) {
 
 	dsn_map, err := dsn.DSNFromStringWithKeys(cw_dsn, "region", "credetials", "group", "stream")
 
@@ -57,13 +58,13 @@ func NewCloudWatchWriter(cw_dsn string) (log.WOFLog, error) {
 		return nil, err
 	}
 
-	l := CloudWatchWriter{
+	wr := CloudWatchWriter{
 		service: svc,
 		group:   group_name,
 		stream:  stream_name,
 	}
 
-	return &l, nil
+	return &wr, nil
 }
 
 // https://docs.aws.amazon.com/sdk-for-go/api/service/cloudwatchlogs/#CloudWatchLogs.PutLogEvents
