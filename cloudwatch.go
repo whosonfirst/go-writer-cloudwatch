@@ -3,11 +3,10 @@ package cloudwatch
 import (
 	"github.com/aaronland/go-string/dsn"
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	"github.com/whosonfirst/go-whosonfirst-aws/session"
-	"io"
-	"os"
-	"strings"
+	"log"
 	"time"
 )
 
@@ -17,9 +16,20 @@ type CloudWatchWriter struct {
 	stream  string
 }
 
-func NewCloudWatchWriter(cw_dsn string) (io.Writer, error) {
+func IsAlreadyExistsError(err error) bool {
 
-	dsn_map, err := dsn.DSNFromStringWithKeys(cw_dsn, "region", "credetials", "group", "stream")
+	aws_err := err.(awserr.Error)
+
+	if aws_err.Code() == "ResourceAlreadyExistsException" {
+		return true
+	}
+
+	return false
+}
+
+func NewCloudWatchWriter(cw_dsn string) (*CloudWatchWriter, error) {
+
+	dsn_map, err := dsn.StringToDSNWithKeys(cw_dsn, "region", "credentials", "group", "stream")
 
 	if err != nil {
 		return nil, err
@@ -39,9 +49,9 @@ func NewCloudWatchWriter(cw_dsn string) (io.Writer, error) {
 		LogGroupName: aws.String(group_name),
 	}
 
-	_, err = csv.CreateLogGroup(group_req)
+	_, err = svc.CreateLogGroup(group_req)
 
-	if err && err != aws.ErrCodeResourceAlreadyExistsException {
+	if err != nil && !IsAlreadyExistsError(err) {
 		return nil, err
 	}
 
@@ -52,9 +62,9 @@ func NewCloudWatchWriter(cw_dsn string) (io.Writer, error) {
 		LogStreamName: aws.String(stream_name),
 	}
 
-	_, err = svc.CreateLogStream(stream_request)
+	_, err = svc.CreateLogStream(stream_req)
 
-	if err && err != aws.ErrCodeResourceAlreadyExistsException {
+	if err != nil && !IsAlreadyExistsError(err) {
 		return nil, err
 	}
 
@@ -71,19 +81,14 @@ func NewCloudWatchWriter(cw_dsn string) (io.Writer, error) {
 // https://docs.aws.amazon.com/sdk-for-go/api/service/cloudwatchlogs/#PutLogEventsInput
 // https://docs.aws.amazon.com/sdk-for-go/api/service/cloudwatchlogs/#InputLogEvent
 
-func (wr CloudWatchWriter) WriteString(msg string) (int, error) {
-	r := strings.NewReader(s)
-	return r.WriteTo(w)
-}
-
-func (wr CloudWatchWriter) Write(msg []bytes) (int, error) {
+func (wr CloudWatchWriter) Write(msg []byte) (int, error) {
 
 	now := time.Now()
 	ts := now.Unix()
 
-	event := &InputLogEvent{
+	event := &cloudwatchlogs.InputLogEvent{
 		Message:   aws.String(string(msg)),
-		Timestamp: ts,
+		Timestamp: aws.Int64(ts),
 	}
 
 	events := []*cloudwatchlogs.InputLogEvent{
@@ -92,8 +97,8 @@ func (wr CloudWatchWriter) Write(msg []bytes) (int, error) {
 
 	req := &cloudwatchlogs.PutLogEventsInput{
 		LogEvents:     events,
-		LogGroupName:  wr.group,
-		LogStreamName: wr.stream,
+		LogGroupName:  aws.String(wr.group),
+		LogStreamName: aws.String(wr.stream),
 	}
 
 	rsp, err := wr.service.PutLogEvents(req)
@@ -101,6 +106,8 @@ func (wr CloudWatchWriter) Write(msg []bytes) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+
+	log.Println(rsp)
 
 	return 0, nil
 }

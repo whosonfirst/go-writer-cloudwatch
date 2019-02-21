@@ -17,6 +17,7 @@ build:	fmt bin
 
 fmt:
 	go fmt *.go
+	go fmt cmd/*.go
 
 deps:
 	@GOPATH=$(GOPATH) go get -u "github.com/aaronland/go-string"
@@ -29,3 +30,6 @@ vendor-deps: rmdeps deps
 	cp -r src vendor
 	find vendor -name '.git' -print -type d -exec rm -rf {} +
 	rm -rf src
+
+bin: 	rmdeps self
+	@GOPATH=$(shell pwd) go build -o bin/write cmd/write.go
